@@ -220,7 +220,7 @@ def show_state(state):
     plt.show()
 
 def train():
-    env = gym.make("ALE/MsPacman-v5", render_mode = "rgb_array")
+    env = gym.make("MsPacman-v0", render_mode = "rgb_array")
     episodes = 0
     learn_counter = 0
 
@@ -244,6 +244,7 @@ def train():
         got_reward = False
         old_action = 3
 
+        total_reward = 0
         while True:
             if dmaker.steps_done > 2_000_000:
                 break
@@ -265,7 +266,7 @@ def train():
             if (terminated or truncated) and lives > 0:
                 reward += REWARDS["win"]
 
-            got_reward = got_reward or reward > 0
+            got_reward = got_reward or reward != 0
             reward = torch.tensor([reward], device = device)
 
             old_action = action_

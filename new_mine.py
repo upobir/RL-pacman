@@ -264,10 +264,10 @@ def train():
         old_action = 0
 
         for i_step in range(50):
-            observation, reward, termianted, truncated, info = env.step(3)
+            observation, reward, terminated, truncated, info = env.step(3)
 
         observations = init_obs(env)
-        observation, reward, termianted, truncated, info = env.step(3)
+        observation, reward, terminated, truncated, info = env.step(3)
         state = preprocess_observation(observations, observation)
 
         got_reward = False
