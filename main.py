@@ -2,6 +2,7 @@ import sys
 from collections import deque
 from math import log, exp
 import random
+import time
 
 import gymnasium as gym
 import numpy as np
@@ -17,20 +18,21 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MAX_EPISODES = 10000
 MAX_STEPS_IN_EPISODE = 10000
 MEAN_WINDOW_LEN = 50
-REPORT_PERIOD = 5
+REPORT_PERIOD = 4
 TARGET_UPDATE_PERIOD = 8_000
 SAVE_PERIOD = 10
 START_FRAME_CNT = 50
 DEAD_FRAME_CNT = 20
 DEFAULT_MOVE = 3
-IMAGE_SHAPE = (84, 84)
+IMAGE_SHAPE = (95, 95)
 EPS_MIN = 0.1
 EPS_MAX = 1.0
-EPS_DECAY = 60_000
+EPS_DECAY = 20_000
 GAMMA = 0.999
 LEARNING_RATE = 0.00025
 MEMORY_CAPACITY = 6_000
 BATCH_SIZE = 128
+FRAME_SKIP = 4
 PREFIX = ""
 ACTION_MAP = {
     1: [1, 4, 6, 5],
@@ -63,6 +65,7 @@ policy_dqn = None
 target_dqn = None
 memory = None
 optimizer = None
+last_frames = deque(maxlen=4)
 
 class PaperDQN(nn.Module):
 
@@ -112,6 +115,17 @@ class ReplayMemory:
         self.dones.append(done)
         self.size = min(self.size + 1, self.capacity)
 
+        sample = random.random()
+        if sample < 0.0:
+            print("action: ", action)
+            print("reward: ", reward)
+            print("done: ", done)
+            plt.figure(figsize=(10, 5))
+            for i in range(5):
+                plt.subplot(1, 5, 6 - (i + 1))
+                plt.imshow(frame_sequence[i], cmap="gray")
+            plt.show()
+
     def sample_torch(self):
         assert self.size >= self.batch_size
         indices = random.sample(range(self.size), k=self.batch_size)
@@ -119,7 +133,6 @@ class ReplayMemory:
         frame_sequences, actions, rewards, dones = map(lambda mem: [mem[i] for i in indices], mems)
 
         frame_sequences = np.array(frame_sequences)
-
 
         states = torch.from_numpy(frame_sequences[:, 1:]).float().to(device)
         next_states = torch.from_numpy(frame_sequences[:, :-1]).float().to(device)
@@ -159,6 +172,12 @@ def report(episode_cnt, score, loss, explore_ratio, steps_in_episode):
 
 
 def preprocess(frame):
+    show = False
+    # if random.random() < 0.01:
+    #     show = True
+
+    original = frame
+
     frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
 
     frame = frame[1:171]
@@ -170,11 +189,20 @@ def preprocess(frame):
     frame = cv2.resize(frame, IMAGE_SHAPE)
     frame = frame / 255.0
 
+    if show:
+        plt.figure(figsize=(8, 8))
+        # show original and frame in two subplots
+        plt.subplot(1, 2, 1)
+        plt.imshow(original)
+        plt.subplot(1, 2, 2)
+        plt.imshow(frame, cmap='gray')
+        plt.show()
+
     return frame
 
 
 def initialize_state(frame):
-    global state
+    global state, last_frames
     frame = preprocess(frame)
     state = np.zeros((4, *IMAGE_SHAPE), dtype=np.float32)
     state[0] = frame.copy()
@@ -182,11 +210,19 @@ def initialize_state(frame):
     state[2] = frame.copy()
     state[3] = frame.copy()
 
+    while len(last_frames) != last_frames.maxlen:
+        last_frames.append(frame.copy())
+
 
 def add_frame(state, frame):
+    global last_frames
     next_state = np.empty((4, *IMAGE_SHAPE), dtype=np.float32)
+    last_frames.append(frame.copy())
     next_state[0] = frame
+    # next_state[0] = frame*0.4 + last_frames[2]*0.2 + last_frames[1]*0.2 + last_frames[0]*0.2
+    # next_state[0] = np.mean(last_frames, axis=0)
     next_state[1:] = state[:-1]
+    # next_state[0] = np.mean(next_state, axis=0)
     return next_state
 
 
@@ -273,9 +309,35 @@ def select_action(state, explore, old_action):
         while action ^ 1 == old_action:
             action = random.randint(0, 3)
     else:
+        # print("work")
         action = select_action_by_policy(state)
 
     return action
+
+
+def preprocess_list(frames):
+    frames = [preprocess(frame) for frame in frames]
+    return np.mean(frames, axis=0)
+
+
+def skipped_step(env, action, frame_skip):
+    frames = []
+    reward = 0
+    terminated = False
+    truncated = False
+    info = None
+    for _ in range(frame_skip):
+        frame, r, t, tr, i = env.step(action)
+        frames.append(frame)
+        reward += r
+        terminated = terminated or t
+        truncated = truncated or tr
+        info = i
+
+        if terminated or truncated:
+            break
+
+    return frames, reward, terminated, truncated, info
 
 
 def train_episode(env):
@@ -303,7 +365,8 @@ def train_episode(env):
         action = select_action(state, True, old_action)
         actual_action = ACTION_MAP[old_actual_action][action]
 
-        frame, reward, terminated, truncated, info = env.step(actual_action)
+        frames, reward, terminated, truncated, info = skipped_step(env, actual_action, FRAME_SKIP)
+        # frame, reward, terminated, truncated, info = env.step(actual_action)
         score += reward
 
         processed_reward, lives, just_died = process_reward(reward, terminated, truncated, info, lives)
@@ -316,12 +379,12 @@ def train_episode(env):
 
         old_actual_action = actual_action
 
-        frame = preprocess(frame)
+        # frame = preprocess(frame)
+        frame = preprocess_list(frames)
         next_state = add_frame(state, frame)
 
         if got_reward:
             memory.push(state, action, processed_reward, next_state, terminated or truncated)
-            pass
 
         if reward != 0:
             old_action = action
@@ -330,6 +393,7 @@ def train_episode(env):
         if steps_in_episode % 2 == 0:
             loss = optimize_model()
         if steps_done % TARGET_UPDATE_PERIOD == 0:
+            print("loading")
             target_dqn.load_state_dict(policy_dqn.state_dict())
 
         torch.cuda.empty_cache()
@@ -403,17 +467,21 @@ def test():
         action = select_action(state, False, None)
         actual_action = ACTION_MAP[old_actual_action][action]
 
-        frame, reward, terminated, truncated, info = env.step(actual_action)
+        # frame, reward, terminated, truncated, info = env.step(actual_action)
+        frames, reward, terminated, truncated, info = skipped_step(env, actual_action, FRAME_SKIP)
         score += reward
 
         old_actual_action = actual_action
 
-        frame = preprocess(frame)
+        # frame = preprocess(frame)
+        frame = preprocess_list(frames)
         next_state = add_frame(state, frame)
         
         state = next_state
 
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
+
+        # time.sleep(0.5)
 
         if terminated or truncated:
             break
