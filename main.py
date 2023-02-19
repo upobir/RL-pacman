@@ -20,6 +20,7 @@ MAX_STEPS_IN_EPISODE = 10000
 MEAN_WINDOW_LEN = 50
 REPORT_PERIOD = 4
 TARGET_UPDATE_PERIOD = 8_000
+TAU = 0.005
 SAVE_PERIOD = 10
 START_FRAME_CNT = 50
 DEAD_FRAME_CNT = 20
@@ -33,6 +34,7 @@ LEARNING_RATE = 0.00025
 MEMORY_CAPACITY = 6_000
 BATCH_SIZE = 128
 FRAME_SKIP = 4
+HARD_UPDATE = True
 PREFIX = ""
 ACTION_MAP = {
     1: [1, 4, 6, 5],
@@ -260,18 +262,33 @@ def do_nothing(env, frame_cnt):
     return frame
 
 
+def update_target_network():
+    global policy_dqn, target_dqn, steps_done
+
+    with torch.no_grad():
+        if HARD_UPDATE:
+            if steps_done % TARGET_UPDATE_PERIOD == 0:
+                target_dqn.load_state_dict(policy_dqn.state_dict())
+        else:
+            target_net_state_dict = target_dqn.state_dict()
+            policy_net_state_dict = policy_dqn.state_dict()
+            for key in policy_net_state_dict:
+                target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
+            target_dqn.load_state_dict(target_net_state_dict)
+
 def optimize_model():
     global policy_dqn, target_dqn, memory, optimizer
     if len(memory) < BATCH_SIZE:
-        return
+        return np.inf
 
     states, actions, rewards, next_states, dones = memory.sample_torch()
 
     predicted_targets = policy_dqn(states)
     predicted_targets = predicted_targets.gather(1, actions)
 
-    target_values = target_dqn(next_states).detach()
-    target_values = target_values.max(1)[0].unsqueeze(1)
+    with torch.no_grad():
+        target_values = target_dqn(next_states).detach()
+        target_values = target_values.max(1)[0].unsqueeze(1)
 
     labels = rewards + (1 - dones) * GAMMA * target_values
     
@@ -283,6 +300,8 @@ def optimize_model():
     for param in policy_dqn.parameters():
         param.grad.data.clamp_(-1, 1)
     optimizer.step()
+
+    update_target_network()
 
     return loss.item()
 
@@ -341,7 +360,7 @@ def skipped_step(env, action, frame_skip):
 
 
 def train_episode(env):
-    global state, steps_in_episode, steps_explored_in_episode, memory, steps_done
+    global state, steps_in_episode, steps_explored_in_episode, memory
 
     frame, info = env.reset()
     lives = 3
@@ -392,9 +411,6 @@ def train_episode(env):
         state = next_state
         if steps_in_episode % 2 == 0:
             loss = optimize_model()
-        if steps_done % TARGET_UPDATE_PERIOD == 0:
-            print("loading")
-            target_dqn.load_state_dict(policy_dqn.state_dict())
 
         torch.cuda.empty_cache()
 
