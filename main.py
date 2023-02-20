@@ -18,24 +18,25 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MAX_EPISODES = 10000
 MAX_STEPS_IN_EPISODE = 10000
 MEAN_WINDOW_LEN = 50
-REPORT_PERIOD = 4
-TARGET_UPDATE_PERIOD = 8_000
+REPORT_PERIOD = 5
+TARGET_UPDATE_PERIOD = 10_000
 TAU = 0.005
 SAVE_PERIOD = 10
-START_FRAME_CNT = 50
-DEAD_FRAME_CNT = 20
+START_FRAME_CNT = 55
+DEAD_FRAME_CNT = 22
 DEFAULT_MOVE = 3
 IMAGE_SHAPE = (95, 95)
 EPS_MIN = 0.1
 EPS_MAX = 1.0
-EPS_DECAY = 20_000
+EPS_DECAY = 40_000
 GAMMA = 0.999
 LEARNING_RATE = 0.00025
 MEMORY_CAPACITY = 6_000
 BATCH_SIZE = 128
+RECENT_MEMORY = 10
 FRAME_SKIP = 4
 HARD_UPDATE = True
-PREFIX = ""
+PREFIX = "/content/drive/MyDrive/Colab/RL/"
 ACTION_MAP = {
     1: [1, 4, 6, 5],
     2: [5, 7, 3, 2],
@@ -68,6 +69,7 @@ target_dqn = None
 memory = None
 optimizer = None
 last_frames = deque(maxlen=4)
+opt_steps = 0
 
 class PaperDQN(nn.Module):
 
@@ -130,7 +132,8 @@ class ReplayMemory:
 
     def sample_torch(self):
         assert self.size >= self.batch_size
-        indices = random.sample(range(self.size), k=self.batch_size)
+        indices = random.sample(range(self.size), k=self.batch_size - RECENT_MEMORY)
+        indices += list(range(self.size-RECENT_MEMORY, self.size))
         mems = (self.frame_sequences, self.actions, self.rewards, self.dones)
         frame_sequences, actions, rewards, dones = map(lambda mem: [mem[i] for i in indices], mems)
 
@@ -263,12 +266,14 @@ def do_nothing(env, frame_cnt):
 
 
 def update_target_network():
-    global policy_dqn, target_dqn, steps_done
+    global policy_dqn, target_dqn, opt_steps
 
     with torch.no_grad():
         if HARD_UPDATE:
-            if steps_done % TARGET_UPDATE_PERIOD == 0:
+            if opt_steps % TARGET_UPDATE_PERIOD == 0:
+                print(">>>> HARD UPDATE" + '-'*20)
                 target_dqn.load_state_dict(policy_dqn.state_dict())
+            opt_steps += 1
         else:
             target_net_state_dict = target_dqn.state_dict()
             policy_net_state_dict = policy_dqn.state_dict()
@@ -279,7 +284,7 @@ def update_target_network():
 def optimize_model():
     global policy_dqn, target_dqn, memory, optimizer
     if len(memory) < BATCH_SIZE:
-        return np.inf
+        return 0
 
     states, actions, rewards, next_states, dones = memory.sample_torch()
 
