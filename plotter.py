@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import csv
 
+from math import log
+
 if __name__ == '__main__':
     # episode,score,avg_score,max_score,loss,explore_ratio,duration
     with open('record.csv', 'r') as f:
@@ -28,7 +30,7 @@ if __name__ == '__main__':
                 score.append(float(row[score_idx]))
                 avg_score.append(float(row[avg_score_idx]))
                 max_score.append(float(row[max_score_idx]))
-                loss.append(float(row[loss_idx]))
+                loss.append(log(float(row[loss_idx])))
                 explore_ratio.append(float(row[explore_ratio_idx]))
                 duration.append(int(row[duration_idx]))
 
@@ -52,9 +54,9 @@ if __name__ == '__main__':
     plt.legend()
 
     plt.subplot(2, 3, 4)
-    plt.plot(episode, loss, label='loss')
+    plt.plot(episode, loss, label='log of loss')
     plt.xlabel('episode')
-    plt.ylabel('loss')
+    plt.ylabel('log of loss')
     plt.legend()
 
     plt.subplot(2, 3, 5)

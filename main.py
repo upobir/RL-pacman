@@ -25,7 +25,7 @@ SAVE_PERIOD = 10
 START_FRAME_CNT = 55
 DEAD_FRAME_CNT = 22
 DEFAULT_MOVE = 3
-IMAGE_SHAPE = (84, 84)
+IMAGE_SHAPE = (95, 95)
 EPS_MIN = 0.1
 EPS_MAX = 1.0
 EPS_DECAY = 40_000
@@ -34,7 +34,7 @@ LEARNING_RATE = 0.00025
 MEMORY_CAPACITY = 6_000
 BATCH_SIZE = 128
 RECENT_MEMORY = 0
-FRAME_SKIP = 1
+FRAME_SKIP = 4
 HARD_UPDATE = True
 PREFIX = ""
 ACTION_MAP = {
@@ -48,14 +48,8 @@ ACTION_MAP = {
     8: [1, 4, 3, 2],
 }
 REWARDS = {
-    "default": -0.2,
-    200: 20,
-    50: 15,
-    10: 10,
-    0: 0,
     "lose": -log(20, 1000),
     "win": 10,
-    "reverse": -2,
 }
 
 scores = deque(maxlen=MEAN_WINDOW_LEN)
@@ -150,8 +144,94 @@ class ReplayMemory:
     def __len__(self):
         return self.size
 
+
+class RewardReplayMemory:
+    def __init__(self, capacity, batch_size):
+        self.frame_sequences = [] 
+        self.actions = [] 
+        self.rewards = [] 
+        self.dones = [] 
+        self.size = 0
+        self.capacity = capacity
+        self.batch_size = batch_size
+        self.indices = [ [], [], [] ]
+        self.nexts = [ 0, 0, 0 ]
+
+
+    def get_memory_ind(self, reward):
+        if reward < 0:
+            return 0
+        elif reward < 0.5:
+            return 1
+        else:
+            return 2
+
+
+    def push(self, state, action, reward, next_state, done):
+        assert (state[:-1] == next_state[1:]).all()
+        frame_sequence = np.concatenate((next_state[0:1], state), axis=0)
+
+        memory_ind = self.get_memory_ind(reward)
+
+        if len(self.indices[memory_ind]) < self.capacity//3:
+            self.indices[memory_ind].append(self.size)
+
+            self.frame_sequences.append(frame_sequence)
+            self.actions.append(action)
+            self.rewards.append(reward)
+            self.dones.append(done)
+
+            self.size += 1
+        else:
+            ind_to_replace = self.indices[memory_ind][self.nexts[memory_ind]]
+
+            self.frame_sequences[ind_to_replace] = frame_sequence
+            self.actions[ind_to_replace] = action
+            self.rewards[ind_to_replace] = reward
+            self.dones[ind_to_replace] = done
+
+            self.nexts[memory_ind] = (self.nexts[memory_ind] + 1) % (self.capacity//3)
+
+            # print("replaced: ", ind_to_replace)
+
+        # print(self.size)
+        # print(self.indices)
+        # print(self.nexts)
+
+        sample = random.random()
+        if memory_ind != 1:
+            print("action: ", action)
+            print("reward: ", reward)
+            print("done: ", done)
+            plt.figure(figsize=(10, 5))
+            for i in range(5):
+                plt.subplot(1, 5, 6 - (i + 1))
+                plt.imshow(frame_sequence[i], cmap="gray")
+            plt.show()
+
+    def sample_torch(self):
+        assert self.size >= self.batch_size
+        indices = random.sample(range(self.size), k=self.batch_size - RECENT_MEMORY)
+        indices += list(range(self.size-RECENT_MEMORY, self.size))
+        mems = (self.frame_sequences, self.actions, self.rewards, self.dones)
+        frame_sequences, actions, rewards, dones = map(lambda mem: [mem[i] for i in indices], mems)
+
+        frame_sequences = np.array(frame_sequences)
+
+        states = torch.from_numpy(frame_sequences[:, 1:]).float().to(device)
+        next_states = torch.from_numpy(frame_sequences[:, :-1]).float().to(device)
+        actions = torch.from_numpy(np.vstack(actions)).long().to(device)
+        rewards = torch.from_numpy(np.vstack(rewards)).float().to(device)
+        dones = torch.from_numpy(np.vstack(dones).astype(np.uint8)).float().to(device)
+        
+        return states, actions, rewards, next_states, dones
+
+    def __len__(self):
+        return self.size
+
+
 def report(episode_cnt, score, loss, explore_ratio, steps_in_episode):
-    global scores, max_score
+    global scores, max_score, memory
     scores.append(score)
     max_score = max(score, max_score)
 
@@ -173,6 +253,7 @@ def report(episode_cnt, score, loss, explore_ratio, steps_in_episode):
     print(f">> Episode: {episode_cnt}")
     print(f"Score: {score},\tAverage score: {avg_score},\tmax_score: {max_score}")
     print(f"Loss: {loss},\texplore_ratio: {explore_ratio},\tduration: {steps_in_episode}")
+    print(f"neg : {len(memory.indices[0])}, normal: {len(memory.indices[1])}, pos: {len(memory.indices[2])}")
     print()
 
 
@@ -184,6 +265,8 @@ def preprocess(frame):
     original = frame
 
     frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    # pick blue channel only
+    # frame = frame[:, :, 2]
 
     frame = frame[1:171]
 
@@ -341,7 +424,8 @@ def select_action(state, explore, old_action):
 
 def preprocess_list(frames):
     frames = [preprocess(frame) for frame in frames]
-    return np.mean(frames, axis=0)
+    # return np.mean(frames, axis=0)
+    return frames[0]
 
 
 def skipped_step(env, action, frame_skip):
@@ -455,7 +539,7 @@ def train(new_model):
     episode_cnt = 0
 
     policy_dqn, target_dqn = make_ddqn(new_model)
-    memory = ReplayMemory(MEMORY_CAPACITY, BATCH_SIZE)
+    memory = RewardReplayMemory(MEMORY_CAPACITY, BATCH_SIZE)
     optimizer = torch.optim.Adam(policy_dqn.parameters(), lr=LEARNING_RATE)
 
     while True:
@@ -471,12 +555,8 @@ def train(new_model):
     env.close()
 
 
-def test():
+def test_episode(env):
     global state, policy_dqn, target_dqn
-    env = gym.make('MsPacman-v0', render_mode = "human")
-
-    policy_dqn, target_dqn = make_ddqn(False)
-
     frame, info = env.reset()
     old_actual_action = 3
 
@@ -500,12 +580,41 @@ def test():
         
         state = next_state
 
-        # torch.cuda.empty_cache()
-
-        # time.sleep(0.5)
-
         if terminated or truncated:
             break
+
+    return score
+
+def test():
+    global policy_dqn, target_dqn
+
+    print()
+    print()
+
+    rounds = input("how many times to test? (default 10): ")
+    if rounds == "":
+        rounds = 10
+    else:
+        rounds = int(rounds)
+    human = input("show playing (will be slower)? (y/n): ")
+    if human == "y":
+        human = True
+    else:
+        human = False
+
+    env = gym.make('MsPacman-v0', render_mode = ("human" if human else "rgb_array"))
+
+    policy_dqn, target_dqn = make_ddqn(False)
+
+    scores = []
+    for i in range(rounds):
+        print(f"Round {i+1}/{rounds}...")
+        score = test_episode(env)
+        scores.append(score)
+
+    print()
+    print("Scores:", scores)
+    print("Average:", np.mean(scores))
 
     env.close()
 
