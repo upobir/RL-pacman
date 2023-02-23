@@ -30,7 +30,11 @@ if __name__ == '__main__':
                 score.append(float(row[score_idx]))
                 avg_score.append(float(row[avg_score_idx]))
                 max_score.append(float(row[max_score_idx]))
-                loss.append(log(float(row[loss_idx])))
+                l = float(row[loss_idx])
+                if l == 0:
+                    loss.append(0)
+                else:
+                    loss.append(log(l))
                 explore_ratio.append(float(row[explore_ratio_idx]))
                 duration.append(int(row[duration_idx]))
 

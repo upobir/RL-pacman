@@ -25,7 +25,8 @@ SAVE_PERIOD = 10
 START_FRAME_CNT = 55
 DEAD_FRAME_CNT = 22
 DEFAULT_MOVE = 3
-IMAGE_SHAPE = (95, 95)
+MOVE_CNT = 9
+IMAGE_SHAPE = (100, 100)
 EPS_MIN = 0.1
 EPS_MAX = 1.0
 EPS_DECAY = 40_000
@@ -472,7 +473,8 @@ def train_episode(env):
             break
 
         action = select_action(state, True, old_action)
-        actual_action = ACTION_MAP[old_actual_action][action]
+        actual_action = action
+        # actual_action = ACTION_MAP[old_actual_action][action]
 
         frames, reward, terminated, truncated, info = skipped_step(env, actual_action, FRAME_SKIP)
         # frame, reward, terminated, truncated, info = env.step(actual_action)
@@ -523,8 +525,8 @@ def save_model(episode_cnt):
 
 
 def make_ddqn(new_model):
-    policy_dqn = PaperDQN(4).to(device)
-    target_dqn = PaperDQN(4).to(device)
+    policy_dqn = PaperDQN(MOVE_CNT).to(device)
+    target_dqn = PaperDQN(MOVE_CNT).to(device)
 
     if new_model:
         target_dqn.load_state_dict(policy_dqn.state_dict())
@@ -567,7 +569,8 @@ def test_episode(env):
     score = 0
     while True:
         action = select_action(state, False, None)
-        actual_action = ACTION_MAP[old_actual_action][action]
+        actual_action = action
+        # actual_action = ACTION_MAP[old_actual_action][action]
 
         # frame, reward, terminated, truncated, info = env.step(actual_action)
         frames, reward, terminated, truncated, info = skipped_step(env, actual_action, FRAME_SKIP)
