@@ -114,16 +114,16 @@ class ReplayMemory:
         self.dones.append(done)
         self.size = min(self.size + 1, self.capacity)
 
-        sample = random.random()
-        if sample < 0.0:
-            print("action: ", action)
-            print("reward: ", reward)
-            print("done: ", done)
-            plt.figure(figsize=(10, 5))
-            for i in range(5):
-                plt.subplot(1, 5, 6 - (i + 1))
-                plt.imshow(frame_sequence[i], cmap="gray")
-            plt.show()
+        # sample = random.random()
+        # if sample < 0.0:
+        #     print("action: ", action)
+        #     print("reward: ", reward)
+        #     print("done: ", done)
+        #     plt.figure(figsize=(10, 5))
+        #     for i in range(5):
+        #         plt.subplot(1, 5, 6 - (i + 1))
+        #         plt.imshow(frame_sequence[i], cmap="gray")
+        #     plt.show()
 
     def sample_torch(self):
         assert self.size >= self.batch_size
@@ -199,16 +199,16 @@ class RewardReplayMemory:
         # print(self.indices)
         # print(self.nexts)
 
-        sample = random.random()
-        if sample < 0.05:
-            print("action: ", action)
-            print("reward: ", reward)
-            print("done: ", done)
-            plt.figure(figsize=(10, 5))
-            for i in range(5):
-                plt.subplot(1, 5, 6 - (i + 1))
-                plt.imshow(frame_sequence[i], cmap="gray")
-            plt.show()
+        # sample = random.random()
+        # if sample < 0.05:
+        #     print("action: ", action)
+        #     print("reward: ", reward)
+        #     print("done: ", done)
+        #     plt.figure(figsize=(10, 5))
+        #     for i in range(5):
+        #         plt.subplot(1, 5, 6 - (i + 1))
+        #         plt.imshow(frame_sequence[i], cmap="gray")
+        #     plt.show()
 
     def sample_torch(self):
         assert self.size >= self.batch_size
@@ -375,9 +375,16 @@ def optimize_model():
     predicted_targets = policy_dqn(states)
     predicted_targets = predicted_targets.gather(1, actions)
 
+    # with torch.no_grad():
+    #     target_values = target_dqn(next_states).detach()
+    #     target_values = target_values.max(1)[0].unsqueeze(1)
+
     with torch.no_grad():
+        next_predictions = policy_dqn(next_states)
+        next_predictions = next_predictions.max(1)[1].unsqueeze(1)
+
         target_values = target_dqn(next_states).detach()
-        target_values = target_values.max(1)[0].unsqueeze(1)
+        target_values = target_values.gather(1, next_predictions)
 
     labels = rewards + (1 - dones) * GAMMA * target_values
     
@@ -412,10 +419,10 @@ def select_action(state, explore, old_action):
     eps_threshold = EPS_MIN + (EPS_MAX - EPS_MIN) * exp(-1. * steps_done / EPS_DECAY)
 
     if explore and sample < eps_threshold:
-        action = random.randint(0, 3)
+        action = random.randint(0, MOVE_CNT-1)
         steps_explored_in_episode += 1
-        while action ^ 1 == old_action:
-            action = random.randint(0, 3)
+        # while action ^ 1 == old_action:
+        #     action = random.randint(0, 3)
     else:
         # print("work")
         action = select_action_by_policy(state)

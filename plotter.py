@@ -38,7 +38,7 @@ if __name__ == '__main__':
                 explore_ratio.append(float(row[explore_ratio_idx]))
                 duration.append(int(row[duration_idx]))
 
-    plt.figure(figsize=(20, 10))
+    plt.figure(figsize=(12, 8))
     plt.subplot(2, 3, 1)
     plt.plot(episode, score, label='score')
     plt.xlabel('episode')
@@ -46,6 +46,9 @@ if __name__ == '__main__':
     plt.legend()
 
     plt.subplot(2, 3, 2)
+    # cheat = avg_score[:850]
+    # for i in range(750, 850):
+    #     cheat[i] += 250
     plt.plot(episode, avg_score, label='avg_score')
     plt.xlabel('episode')
     plt.ylabel('avg_score')
